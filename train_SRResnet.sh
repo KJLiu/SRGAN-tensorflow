@@ -15,7 +15,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --name_queue_capacity 4096 \
     --image_queue_capacity 4096 \
     --perceptual_mode MSE \
-    --queue_thread 4 \
+    --queue_thread 16 \
     --ratio 0.001 \
     --learning_rate 0.0001 \
     --decay_step 400000 \

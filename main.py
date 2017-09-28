@@ -10,7 +10,7 @@ from lib.ops import *
 import math
 import time
 import numpy as np
-
+from tqdm import trange
 Flags = tf.app.flags
 
 # The system parameter
@@ -52,8 +52,8 @@ Flags.DEFINE_boolean('stair', False, 'Whether perform staircase decay. True => d
 Flags.DEFINE_float('beta', 0.9, 'The beta1 parameter for the Adam optimizer')
 Flags.DEFINE_integer('max_epoch', None, 'The max epoch for the training')
 Flags.DEFINE_integer('max_iter', 1000000, 'The max iteration of the training')
-Flags.DEFINE_integer('display_freq', 20, 'The diplay frequency of the training process')
-Flags.DEFINE_integer('summary_freq', 100, 'The frequency of writing summary')
+Flags.DEFINE_integer('display_freq', 2000, 'The diplay frequency of the training process')
+Flags.DEFINE_integer('summary_freq', 10000, 'The frequency of writing summary')
 Flags.DEFINE_integer('save_freq', 10000, 'The frequency of saving images')
 
 
@@ -333,7 +333,7 @@ elif FLAGS.mode == 'train':
 
         print('Optimization starts!!!')
         start = time.time()
-        for step in range(max_iter):
+        for step in trange(max_iter):
             fetches = {
                 "train": Net.train,
                 "global_step": sv.global_step,

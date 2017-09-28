@@ -13,7 +13,7 @@ result/
 .idea/
 SRGAN_pre-trained.tar
 vgg_19_2016_08_28.tar.gz
-
+RAISE*
 
 # Created by https://www.gitignore.io/api/python
 
