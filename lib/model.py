@@ -452,74 +452,88 @@ def SRGAN(inputs, targets, FLAGS):
     )
 
 
-def SRResnet(inputs, targets, FLAGS):
+def SRResnet(inputs, targets, FLAGS, devices = ['/gpu:%d'%i for i in range(4)]):
     # Define the container of the parameter
     Network = collections.namedtuple('Network', 'content_loss, gen_grads_and_vars, gen_output, train, global_step, \
             learning_rate')
+    tower_grads = []
+    tower_outputs = []
+    with tf.device('/cpu:0'):
+        split_inputs = tf.split(inputs, len(devices), axis=0)
+        split_targets = tf.split(targets, len(devices), axis=0)
+        # Define the learning rate and global step
+        with tf.variable_scope('get_learning_rate_and_global_step'):
+            global_step = tf.contrib.framework.get_or_create_global_step()
+            learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, global_step, FLAGS.decay_step, FLAGS.decay_rate,
+                                                       staircase=FLAGS.stair)
+            incr_global_step = tf.assign(global_step, global_step + 1)
 
-    # Build the generator part
-    with tf.variable_scope('generator'):
-        output_channel = targets.get_shape().as_list()[-1]
-        gen_output = generator(inputs, output_channel, reuse=False, FLAGS=FLAGS)
-        gen_output.set_shape([FLAGS.batch_size, FLAGS.crop_size * 4, FLAGS.crop_size * 4, 3])
 
-    # Use the VGG54 feature
-    if FLAGS.perceptual_mode == 'VGG54':
-        with tf.name_scope('vgg19_1') as scope:
-            extracted_feature_gen = VGG19_slim(gen_output, FLAGS.perceptual_mode, reuse=False, scope=scope)
-        with tf.name_scope('vgg19_2') as scope:
-            extracted_feature_target = VGG19_slim(targets, FLAGS.perceptual_mode, reuse=True, scope=scope)
+        with tf.variable_scope(tf.get_variable_scope()) as scope:
+            for i, (inputs, targets, dev) in enumerate(zip(split_inputs, split_targets, devices)):        
+                    with tf.device(dev):
+                        with tf.name_scope('tower%d'%i):
+                            # Build the generator part
+                            with tf.variable_scope('generator'):
+                                output_channel = targets.get_shape().as_list()[-1]
+                                gen_output = generator(inputs, output_channel, reuse=False, FLAGS=FLAGS)
+                                gen_output.set_shape([FLAGS.batch_size/len(devices), FLAGS.crop_size * 4, FLAGS.crop_size * 4, 3])
+                                tower_outputs.append(gen_output)
 
-    elif FLAGS.perceptual_mode == 'VGG22':
-        with tf.name_scope('vgg19_1') as scope:
-            extracted_feature_gen = VGG19_slim(gen_output, FLAGS.perceptual_mode, reuse=False, scope=scope)
-        with tf.name_scope('vgg19_2') as scope:
-            extracted_feature_target = VGG19_slim(targets, FLAGS.perceptual_mode, reuse=True, scope=scope)
+                            # Use the VGG54 feature
+                            if FLAGS.perceptual_mode == 'VGG54':
+                                with tf.name_scope('vgg19_1') as scope:
+                                    extracted_feature_gen = VGG19_slim(gen_output, FLAGS.perceptual_mode, reuse=False, scope=scope)
+                                with tf.name_scope('vgg19_2') as scope:
+                                    extracted_feature_target = VGG19_slim(targets, FLAGS.perceptual_mode, reuse=True, scope=scope)
 
-    elif FLAGS.perceptual_mode == 'MSE':
-        extracted_feature_gen = gen_output
-        extracted_feature_target = targets
+                            elif FLAGS.perceptual_mode == 'VGG22':
+                                with tf.name_scope('vgg19_1') as scope:
+                                    extracted_feature_gen = VGG19_slim(gen_output, FLAGS.perceptual_mode, reuse=False, scope=scope)
+                                with tf.name_scope('vgg19_2') as scope:
+                                    extracted_feature_target = VGG19_slim(targets, FLAGS.perceptual_mode, reuse=True, scope=scope)
 
-    else:
-        raise NotImplementedError('Unknown perceptual type')
+                            elif FLAGS.perceptual_mode == 'MSE':
+                                extracted_feature_gen = gen_output
+                                extracted_feature_target = targets
 
-    # Calculating the generator loss
-    with tf.variable_scope('generator_loss'):
-        # Content loss
-        with tf.variable_scope('content_loss'):
-            # Compute the euclidean distance between the two features
-            # check=tf.equal(extracted_feature_gen, extracted_feature_target)
-            diff = extracted_feature_gen - extracted_feature_target
-            if FLAGS.perceptual_mode == 'MSE':
-                content_loss = tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
-            else:
-                content_loss = FLAGS.vgg_scaling * tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
+                            else:
+                                raise NotImplementedError('Unknown perceptual type')
 
-        gen_loss = content_loss
+                            # Calculating the generator loss
+                            with tf.variable_scope('generator_loss'):
+                                # Content loss
+                                with tf.variable_scope('content_loss'):
+                                    # Compute the euclidean distance between the two features
+                                    # check=tf.equal(extracted_feature_gen, extracted_feature_target)
+                                    diff = extracted_feature_gen - extracted_feature_target
+                                    if FLAGS.perceptual_mode == 'MSE':
+                                        content_loss = tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
+                                    else:
+                                        content_loss = FLAGS.vgg_scaling * tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
 
-    # Define the learning rate and global step
-    with tf.variable_scope('get_learning_rate_and_global_step'):
-        global_step = tf.contrib.framework.get_or_create_global_step()
-        learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, global_step, FLAGS.decay_step, FLAGS.decay_rate,
-                                                   staircase=FLAGS.stair)
-        incr_global_step = tf.assign(global_step, global_step + 1)
+                                gen_loss = content_loss
 
-    with tf.variable_scope('generator_train'):
-        # Need to wait discriminator to perform train step
-        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-            gen_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
-            gen_optimizer = tf.train.AdamOptimizer(learning_rate, beta1=FLAGS.beta)
-            gen_grads_and_vars = gen_optimizer.compute_gradients(gen_loss, gen_tvars)
-            gen_train = gen_optimizer.apply_gradients(gen_grads_and_vars)
+                            scope.reuse_variables()
+                            with tf.variable_scope('generator_train'):
+                                # Need to wait discriminator to perform train step
+                                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                                    gen_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
+                                    gen_optimizer = tf.train.AdamOptimizer(learning_rate, beta1=FLAGS.beta)
+                                    gen_grads_and_vars = gen_optimizer.compute_gradients(gen_loss, gen_tvars) 
+                            tower_grads.append(gen_grads_and_vars)
+        # [ToDo] If we do not use moving average on loss??
+        exp_averager = tf.train.ExponentialMovingAverage(decay=0.99)
+        update_loss = exp_averager.apply([content_loss])
 
-    # [ToDo] If we do not use moving average on loss??
-    exp_averager = tf.train.ExponentialMovingAverage(decay=0.99)
-    update_loss = exp_averager.apply([content_loss])
+        avg_grads = average_gradients(tower_grads)
+        gen_train = gen_optimizer.apply_gradients(avg_grads)
 
-    return Network(
+        all_outputs = tf.concat(tower_outputs, axis=0)
+        return Network(
         content_loss=exp_averager.average(content_loss),
         gen_grads_and_vars=gen_grads_and_vars,
-        gen_output=gen_output,
+        gen_output=all_outputs,
         train=tf.group(update_loss, incr_global_step, gen_train),
         global_step=global_step,
         learning_rate=learning_rate
@@ -559,7 +573,40 @@ def save_images(fetches, FLAGS, step=None):
                 f.write(contents)
         filesets.append(fileset)
     return filesets
+def average_gradients(tower_grads):
+    """Calculate the average gradient for each shared variable across all towers.
+    Note that this function provides a synchronization point across all towers.
+    Args:
+    tower_grads: List of lists of (gradient, variable) tuples. The outer list
+      is over individual gradients. The inner list is over the gradient
+      calculation for each tower.
+    Returns:
+     List of pairs of (gradient, variable) where the gradient has been averaged
+     across all towers.
+    """
+    average_grads = []
+    for grad_and_vars in zip(*tower_grads):
+        # Note that each grad_and_vars looks like the following:
+        #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+        grads = []
+        for g, _ in grad_and_vars:
+            # Add 0 dimension to the gradients to represent the tower.
+            expanded_g = tf.expand_dims(g, 0)
 
+            # Append on a 'tower' dimension which we will average over below.
+            grads.append(expanded_g)
+
+        # Average over the 'tower' dimension.
+        grad = tf.concat(axis=0, values=grads)
+        grad = tf.reduce_mean(grad, 0)
+
+        # Keep in mind that the Variables are redundant because they are shared
+        # across towers. So .. we will just return the first tower's pointer to
+        # the Variable.
+        v = grad_and_vars[0][1]
+        grad_and_var = (grad, v)
+        average_grads.append(grad_and_var)
+    return average_grads
 
 
 

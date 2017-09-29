@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-CUDA_VISIBLE_DEVICES=0 python main.py \
+python main.py \
     --output_dir ./experiment_SRResnet/ \
     --summary_dir ./experiment_SRResnet/log/ \
     --mode train \
     --is_training True \
     --task SRResnet \
-    --batch_size 2 \
+    --batch_size 8 \
     --flip True \
     --random_crop True \
     --crop_size 24 \
