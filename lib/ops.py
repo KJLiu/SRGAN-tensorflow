@@ -68,8 +68,7 @@ def prelu_tf(inputs, name='Prelu'):
 
 # Define our Lrelu
 def lrelu(inputs, alpha):
-    return keras.layers.LeakyReLU(alpha=alpha).call(inputs)
-
+    return tf.maximum(inputs, alpha*inputs)
 
 def batchnorm(inputs, is_training):
     return slim.batch_norm(inputs, decay=0.9, epsilon=0.001, updates_collections=tf.GraphKeys.UPDATE_OPS,
